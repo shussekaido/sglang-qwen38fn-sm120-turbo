@@ -1,0 +1,119 @@
+From fef1fc57ec030b3d9b0b7c80334c22bd992668a4 Mon Sep 17 00:00:00 2001
+From: test <test@test>
+Date: Wed, 2 Sep 2026 21:41:59 +0000
+Subject: [PATCH 1/4] SM120 fp8 KV cache end-to-end (QSA, indexer)
+
+Covers QSA cache casting, the indexer, and page sizing, so the fp8
+cache is consistent from allocation through read.
+---
+ .../srt/layers/attention/qsa/sparse_attn.py   |  8 ++--
+ .../attention/qwen_sparse_attn_backend.py     | 39 +++++++++++++------
+ 2 files changed, 31 insertions(+), 16 deletions(-)
+
+diff --git a/python/sglang/srt/layers/attention/qsa/sparse_attn.py b/python/sglang/srt/layers/attention/qsa/sparse_attn.py
+index 15e5af56c2..fc3dccf4bb 100644
+--- a/python/sglang/srt/layers/attention/qsa/sparse_attn.py
++++ b/python/sglang/srt/layers/attention/qsa/sparse_attn.py
+@@ -96,12 +96,12 @@ def _sparse_gqa_prefill(
+             k_base + token[None, :] * sk_n + offs_d[:, None] * sk_d,
+             mask=valid[None, :],
+             other=0.0,
+-        )
++        ).to(q_values.dtype)
+         values = tl.load(
+             v_base + token[:, None] * sv_n + offs_d[None, :] * sv_d,
+             mask=valid[:, None],
+             other=0.0,
+-        )
++        ).to(q_values.dtype)
+         scores = tl.where(valid[None, :], tl.dot(q_values, keys), -float("inf"))
+         next_max = tl.maximum(max_value, tl.max(scores, 1))
+         alpha = tl.math.exp2(max_value - next_max)
+@@ -237,12 +237,12 @@ def _sparse_gqa_chunk_prefill(
+             k_base + token[None, :] * sk_n + offs_d[:, None] * sk_d,
+             mask=valid[None, :],
+             other=0.0,
+-        )
++        ).to(q_values.dtype)
+         values = tl.load(
+             v_base + token[:, None] * sv_n + offs_d[None, :] * sv_d,
+             mask=valid[:, None],
+             other=0.0,
+-        )
++        ).to(q_values.dtype)
+         scores = tl.where(valid[None, :], tl.dot(q_values, keys), -float("inf"))
+         next_max = tl.maximum(max_value, tl.max(scores, 1))
+         alpha = tl.math.exp2(max_value - next_max)
+diff --git a/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py b/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py
+index 7758a88fea..15a31460d5 100644
+--- a/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py
++++ b/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py
+@@ -47,15 +47,18 @@ _TRTLLM_SPARSE_PAGE_SIZE = 64
+ 
+ @lru_cache(maxsize=1)
+ def _resolve_trtllm_sparse_decode():
+-    """trtllm-gen paged decode for the post-gather sparse attention.
++    """Select the FlashInfer trtllm batch-decode kernel for sparse decode.
+ 
+-    On Blackwell the FA4 cute varlen fallback runs a prefill-shaped kernel
+-    at decode row counts; the trtllm-gen decode kernel over a page-aligned
+-    scratch measures ~35% faster for the gather+attention pair.
++    Without it, Blackwell decode falls back to the FA4 cute varlen kernel. That kernel is shaped
++    for prefill rows and slow at decode row counts. The trtllm API is paged, so the gathered
++    top-k rows are stored in fixed-size pages of _TRTLLM_SPARSE_PAGE_SIZE tokens.
++    Returns the kernel, or None when the device is not SM100/SM12x or flashinfer cannot be imported.
+     """
+-    from sglang.srt.utils import is_sm100_supported
++    from sglang.srt.utils import is_sm100_supported, is_sm120_supported
+ 
+-    if not is_sm100_supported():
++    # SM100 (datacenter Blackwell) and SM12x (consumer Blackwell).
++    # is_sm120_supported() also carries the CUDA 12.8 floor the trtllm runtime needs.
++    if not (is_sm100_supported() or is_sm120_supported()):
+         return None
+     try:
+         from flashinfer.decode import trtllm_batch_decode_with_kv_cache
+@@ -1463,22 +1466,34 @@ class QwenSparseAttnBackend(AttentionBackend):
+             )
+             return self._pad_extend_output(output, num_output_rows)
+ 
+-        # The validated chunk-prefill kernel consumes tightly packed full-context
+-        # K/V. Current-chunk K/V has already been committed to the cache above.
++        # The validated chunk-prefill kernel consumes tightly packed full-context K/V.
++        # Current-chunk K/V has already been committed to the cache above.
+         pool = self.token_to_kv_pool
+         k_buffer = pool.get_key_buffer(layer.layer_id)
+         v_buffer = pool.get_value_buffer(layer.layer_id)
+         req_to_token = self.req_to_token_pool.req_to_token
+         req_indices = forward_batch.req_pool_indices.tolist()
++        # With --kv-cache-dtype fp8_e4m3 this path receives an fp8 KV buffer.
++        # tl.dot inside sparse_gqa_fwd_interface_triton_ck rejects fp8 rhs operands
++        # ("Unsupported rhs dtype fp8e4nv"), so the selected rows are cast to the query dtype.
++        # TODO: assumes the direct-cast e4m3 store, KV scale 1.0.
++        # If a checkpoint ships per-layer KV descale, apply those scales here.
++        _kv_cast = (
++            (lambda t: t.to(q.dtype)) if k_buffer.dtype != q.dtype else (lambda t: t)
++        )
+         k_parts = [
+-            k_buffer.index_select(
+-                0, req_to_token[req_indices[i], : sequence_lens[i]].long()
++            _kv_cast(
++                k_buffer.index_select(
++                    0, req_to_token[req_indices[i], : sequence_lens[i]].long()
++                )
+             )
+             for i in range(len(sequence_lens))
+         ]
+         v_parts = [
+-            v_buffer.index_select(
+-                0, req_to_token[req_indices[i], : sequence_lens[i]].long()
++            _kv_cast(
++                v_buffer.index_select(
++                    0, req_to_token[req_indices[i], : sequence_lens[i]].long()
++                )
+             )
+             for i in range(len(sequence_lens))
+         ]
+-- 
+2.55.0
+
