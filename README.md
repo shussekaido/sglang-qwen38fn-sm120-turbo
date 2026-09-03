@@ -50,7 +50,7 @@ This builds on top of the day-0 official Docker image `lmsysorg/sglang:qwen38fla
 
 ## Build and serve
 
-Modify the top of `serve_sglang_qwen3.8-flash-next.sh` for your machine:
+Modify the top of `serve_sglang_qwen3.8-flash-next-example.sh` for your machine:
 - `IMAGE`: tag you built below
 - `CHECKPOINT`: `radixark` (validated) or `lil` (WIP)
 - `MODEL_SOURCE`: `hf` (downloads to `HF_CACHE`) or `local` (reads `LOCAL_MODELS/<dir>` offline)
@@ -59,9 +59,11 @@ Modify the top of `serve_sglang_qwen3.8-flash-next.sh` for your machine:
 
 ```bash
 podman build -t localhost/sglang-qwen38fn-sm120-turbo:r20 .
-./serve_sglang_qwen3.8-flash-next.sh    # recap of the full config goes to stderr
+./serve_sglang_qwen3.8-flash-next-example.sh    # recap of the full config goes to stderr
 curl -s localhost:30000/health
 ```
+
+Keep your own variants in `internal/`: the folder ships empty and everything in it is git-ignored, so a customized launcher (`internal/serve_my.sh`, host paths, bench settings) lives beside the stack without ever being committed or published.
 
 ## Acknowledgements
 

@@ -29,7 +29,9 @@ mkdir -p "${HF_CACHE}" "${LOCAL_MODELS}" "${SGL_CACHE}"/{sglang-generated,triton
 MODELNAME="Qwen3.8-Flash-Next"
 CHECKPOINT=radixark            # radixark | lil
 MODEL_SOURCE=local             # hf: resolve the id on first boot (downloads to ${HF_CACHE})
-                               # local: read ${LOCAL_MODELS}/<dir>, boots offline (HF_HUB_OFFLINE=1)
+                               # local: read ${LOCAL_MODELS}/<dir>, no downloads
+OFFLINE_MODE=true              # TRANSFORMERS_OFFLINE=1 and HF_HUB_OFFLINE=1 inside the container, nothing reaches the Hub
+                               # an hf boot with a cold cache needs it false to download
 
 case "${CHECKPOINT}" in
   radixark)
@@ -77,7 +79,7 @@ DEFAULT_REASONING_EFFORT="medium" # xhigh | medium | low, per-request chat_templ
 # ============================================================
 # Guards
 # ============================================================
-for knob in MTP KVFP8 HICACHE ONLINE_MXFP8; do
+for knob in MTP KVFP8 HICACHE ONLINE_MXFP8 OFFLINE_MODE; do
   case "${!knob}" in true|false) ;; *) echo "${knob} must be true or false" >&2; exit 2 ;; esac
 done
 case "${GDN_MTP_CACHE_MODE}" in
@@ -102,7 +104,10 @@ ENV_VARS=(
     SGLANG_CACHE_DIR=/root/.cache/sglang-generated
 )
 if [[ "${MODEL_SOURCE}" == local ]]; then
-    ENV_VARS+=(HF_HUB_OFFLINE=1)
+    OFFLINE_MODE=true
+fi
+if [[ "${OFFLINE_MODE}" == true ]]; then
+    ENV_VARS+=(TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1)
 fi
 
 # Exact derivation, SGLang autoderivation overallocates and wastes KV-cache.
@@ -133,6 +138,7 @@ if [[ "${MODEL_SOURCE}" == local ]]; then
 else
     if ! find "${HF_CACHE}/hub" -path "*--$(tr '[:lower:]' '[:upper:]' <<< "${MODEL_HF%%/*}")--$(tr '[:lower:]' '[:upper:]' <<< "${MODEL_HF##*/}")" -prune -name "*.safetensors" -print -quit 2>/dev/null | grep -q .; then
         echo "note: ${MODEL_HF} is not in ${HF_CACHE}, first boot downloads the full checkpoint" >&2
+        [[ "${OFFLINE_MODE}" == true ]] && echo "OFFLINE_MODE=true blocks that download, set it false for a cold-cache hf boot" >&2
     fi
     MODEL_PATH="${MODEL}"
 fi
@@ -150,7 +156,6 @@ SERVER_ARGS=(
         # Model identity
         --served-model-name "${MODELNAME}"
         --model-path "${MODEL_PATH}"
-        --trust-remote-code
         # Tokenizer / tools / reasoning
         --reasoning-parser auto
         --tool-call-parser auto
@@ -195,6 +200,7 @@ SERVER_ARGS=(
 {
   printf 'launch %s as %s\n' "${MODEL}" "${MODELNAME}"
   printf '  checkpoint       %s (%s)\n' "${CHECKPOINT}" "${MODEL_SOURCE}"
+  printf '  offline          %s\n' "$([ "${OFFLINE_MODE}" == true ] && echo on || echo off)"
   printf '  image            %s\n' "${IMAGE}"
   printf '  pod / port       %s / %s\n' "${PODNAME}" "${SGLANG_PORT}"
   printf '  parallel         tp=%s\n' "${TP_SIZE}"

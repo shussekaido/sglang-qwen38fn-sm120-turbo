@@ -1,3 +1,7 @@
 cache-sglang/
 __pycache__/
 *.pyc
+
+# personal customizations: anything placed in internal/ stays on this machine
+internal/*
+!internal/.gitkeep
