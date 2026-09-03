@@ -12,8 +12,8 @@ Despite being undertrained, and having very few active parameters and a small si
 
 On the NVFP4 checkpoint [`RadixArk/Qwen3.8-Flash-Next-NVFP4`](https://huggingface.co/RadixArk/Qwen3.8-Flash-Next-NVFP4), served by the day-0 SGLang image:
 - 1x RTX Pro 6000, power-limited to 360W, memory overclocked by +3000MT/s (+6000 in LACT)
-- 939456 tokens in KV cache
-- Default 4 max concurrent requests (more requires more linear attention cache which directly eats into KV cache)
+- 939456 tokens in KV cache for 4 max concurrent requests
+- 856256 tokens in KV cache for 8 max concurrent requests
 - 11k~13k prefill tok/s
 
   <details><summary>prefill trace</summary>
@@ -21,23 +21,30 @@ On the NVFP4 checkpoint [`RadixArk/Qwen3.8-Flash-Next-NVFP4`](https://huggingfac
   ![prefill 11k-13k tok/s](images/prefill-11k-13k.png)
 
   </details>
-- 800 decode tok/s (~200 tok/s per stream) on hard-to-predict `--profile estonia` reasoning benchmark from https://github.com/local-inference-lab/llm-inference-bench
+- Aggregate 800 decode tok/s (~200 tok/s per stream) on hard-to-predict `--profile estonia` reasoning benchmark from https://github.com/local-inference-lab/llm-inference-bench
 
   <details><summary>decode trace, 4 concurrent requests</summary>
 
-  ![decode aggregate ~800 tok/s at 4 concurrent requests](images/decode-agg-800.png)
+  ![decode aggregate ~800 tok/s at 4 concurrent requests](images/decode-agg4-800.png)
 
   </details>
-- up to 340 decode tok/s single request on easy to predict code/compaction
+- Aggregate 1170 decode tok/s aggregate at 8 concurrent requests
+
+  <details><summary>decode trace, 8 concurrent requests</summary>
+
+  ![decode aggregate ~1170 tok/s at 8 concurrent requests](images/decode-agg8-1170.png)
+
+  </details>
+- up to 355 decode tok/s single request on easy to predict code/compaction. `--profile lavd`  reasoning benchmark from https://github.com/local-inference-lab/llm-inference-bench
 
   <details><summary>decode trace, single request</summary>
 
-  ![decode single request ~340 tok/s on easy-to-predict code/compaction](images/decode-single-340.png)
+  ![decode single request ~355 tok/s on easy-to-predict code/compaction](images/decode-single-355.png)
 
   </details>
-- 177~211 tok/s single request on hard to predict concurrency benchmark from https://github.com/local-inference-lab/llm-inference-bench
+- 206~234 tok/s single request on hard to predict concurrency benchmark from https://github.com/local-inference-lab/llm-inference-bench
 
-![single request 177~211 tok/s on the hard concurrency benchmark](images/llm-inference-bench.png)
+![single request 206~234 tok/s on the hard concurrency benchmark](images/llm-inference-bench.png)
 
 ## Behind-the-scenes
 
@@ -47,6 +54,7 @@ This builds on top of the day-0 official Docker image `lmsysorg/sglang:qwen38fla
 - **0002** linear-attention layers don't cache MTP drafts, they are recomputed. Saves ~2 GB of KV budget. (And it's surprisingly not slower)
 - **0003** quantizes at load whatever the checkpoint left in bf16 (attention, MLP, lm_head, hyperconnection mix) to MXFP8 to reduce memory bandwidth at close to zero-accuracy cost. On FlashInfer 0.6.18, this should be even faster as FlashInfer 0.6.18 integrates [`local-inference-lab/b12x`](https://github.com/local-inference-lab/b12x) and its hardware-accelerated block-scaled GEMM kernel.
 - **0004** prepares support for https://huggingface.co/local-inference-lab/Qwen3.8-Flash-Next-NVFP4 which has a calibration dataset richer than CNN/DailyMail. This is important to get proper scales for NVFP4 activations so signal isn't lost due to oversaturation because the calibration scale doesn't represent actual maximum.
+- **0005** keeps abandoned runs from eating the machine: an aborted or timed-out client now really evicts its request, and no longer starves the queue behind it.
 
 ## Build and serve
 
@@ -58,7 +66,7 @@ Modify the top of `serve_sglang_qwen3.8-flash-next-example.sh` for your machine:
 - `PODNAME`, `SGLANG_PORT`: container name and port
 
 ```bash
-podman build -t localhost/sglang-qwen38fn-sm120-turbo:r20 .
+podman build -t localhost/sglang-qwen38fn-sm120-turbo:r21 .
 ./serve_sglang_qwen3.8-flash-next-example.sh    # recap of the full config goes to stderr
 curl -s localhost:30000/health
 ```

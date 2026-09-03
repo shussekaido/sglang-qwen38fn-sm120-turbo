@@ -1,0 +1,165 @@
+From 19c27eb28e1354dd6be4a9c4434649572511703e Mon Sep 17 00:00:00 2001
+From: test <test@test>
+Date: Thu, 3 Sep 2026 09:45:39 +0000
+Subject: Abort and admission fixes for abandoned runs
+
+---
+ python/sglang/srt/managers/scheduler.py       | 49 +++++++++++++++++--
+ .../sglang/srt/managers/tokenizer_manager.py  | 39 ++++++++++-----
+ 2 files changed, 72 insertions(+), 16 deletions(-)
+
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+index 58f9e4eb62..28e825018c 100644
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -2945,10 +2945,13 @@ class Scheduler(
+         if req is None:
+             return
+         if self.chunked_req is not req:
+-            # Already past chunked prefill; the running-batch abort path handles
+-            # it. Drop the marker once the request is actually gone.
+             if req.finished() or req.req_pool_idx is None:
+                 self._pending_chunked_abort_req = None
++                return
++            # The request left the chunked slot while its abort was deferred,
++            # so retry the abort against wherever it now sits.
++            self._pending_chunked_abort_req = None
++            self.abort_request(AbortReq(rid=req.rid))
+             return
+ 
+         prepare_abort(req, "Aborted")
+@@ -3183,6 +3186,22 @@ class Scheduler(
+ 
+         return NextBatchPlan(batch_to_run=ret, running_batch=running_batch)
+ 
++    # Admission pass, run once per scheduling step. batch_is_full gates entry to the whole pass.
++    # It is set at the two latch points below and cleared when a prefill merges into the running
++    # batch or the running batch shrinks.
++    #
++    #   waiting_queue
++    #     |
++    #     v  entry: batch_is_full, empty queue, or chunked in flight -> skip pass
++    #     v  entry: allocatable(running_bs) <= 0                     -> latch, skip
++    #     v  per queued request, stopping at the first match
++    #     |    batch_is_full set by an earlier iteration             -> stop
++    #     |    adder.add -> CONTINUE (admitted)                      -> next request
++    #     |    adder.add -> NO_TOKEN, token budget spent             -> latch, stop
++    #     |    admissions reached the per-call cap                   -> stop, no latch
++    #     v
++    #   admitted requests form the next prefill batch
++    #
+     def _get_new_batch_prefill_raw(
+         self,
+         prefill_delayer_single_pass: Optional[PrefillDelayerSinglePassExecutor],
+@@ -3302,7 +3321,18 @@ class Scheduler(
+ 
+             running_bs = len(running_batch.reqs)
+             if len(adder.can_run_list) >= self.get_num_allocatable_reqs(running_bs):
+-                running_batch.batch_is_full = True
++                # Time-of-check/time-of-use gap, over the `for req in self.waiting_queue` loop:
++                #  - get_num_allocatable_reqs: Counted once per iteration
++                #    of that loop, before the loop fills the free request slots
++                #    and before the overlap schedule merges its running requests into running_batch.reqs.
++                #  - adder.can_run_list: Grown since that count, by the admissions the same loop
++                #    has already made.
++                # Between the two counts there can be up to a full walk of the waiting queue's
++                # admissions plus the requests the overlap schedule has not merged, leading
++                # to a stop while request slots remain free. This is fine because the comparison
++                # only under-counts, so the loop never admits too much. An early stop
++                # is not proof that the batch is full, so batch_is_full stays unset.
++                break
+             if self.disaggregation_mode == DisaggregationMode.PREFILL:
+                 # In prefill mode, prealloc queue and transfer queue can also take memory,
+                 # so we need to check if the available size for the actual available size.
+@@ -4560,6 +4590,17 @@ class Scheduler(
+ 
+         # Delete requests in the running batch
+         if self.ps.pp_size == 1:
++            # TODO:
++            # the abort loop covers running_batch and last_batch only.
++            # A request admitted but not yet merged sits in the new overlap batch,
++            # so an abort arriving in that window misses the request
++            # The request then moves through these stages:
++            #   - admitted -> new overlap batch -> abort loop finds nothing.
++            #     The missed abort is not re-fired.
++            #     Overlap merge, seconds later -> request enters running_batch.
++            #   - Later abort -> evicted (client retry, timeout, or abort_all broom).
++            #   - No later abort -> decodes to completion, holding its request slot the whole time.
++            # A permanent fix would make this loop visit the new overlap batch too.
+             inflight_batches = [self.running_batch, self.last_batch]
+         else:
+             inflight_batches = [*self.running_mbs, *self.mbs]
+@@ -4572,7 +4613,7 @@ class Scheduler(
+                 # Abort method 3: set `to_finish`
+                 # The request will still run one decode forward pass.
+                 # Then we reuse all existing code to clean up the KV cache allocation.
+-                logger.debug(f"Abort running request. {req.rid=}")
++                logger.info(f"Abort running request. {req.rid=}")
+                 req.to_finish = FINISH_ABORT()
+ 
+     def _pause_engine(self) -> Tuple[List[Req], int]:
+diff --git a/python/sglang/srt/managers/tokenizer_manager.py b/python/sglang/srt/managers/tokenizer_manager.py
+index 41df6be03d..9c8656cd7f 100644
+--- a/python/sglang/srt/managers/tokenizer_manager.py
++++ b/python/sglang/srt/managers/tokenizer_manager.py
+@@ -1985,12 +1985,19 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
+         if not abort_all and not rid:
+             logger.warning("Ignore abort_request with empty rid and abort_all=False")
+             return
+-        if (
+-            not abort_all
+-            and self.server_args.tokenizer_worker_num == 1
+-            and rid not in self.rid_to_state
+-        ):
+-            return
++        # A ghost is a rid whose state was popped from rid_to_state while the scheduler still
++        # decodes it. Every route below dispatches its AbortReq before popping,
++        # and this function checks no rid_to_state membership. The empty rid is rejected
++        # above because it would match every rid.
++        #
++        #   handler cancel  ->  _discard_pending_req_states: dispatch, then pop
++        #   4 s state tick  ->  _wait_one_response type 1 and type 3 checks
++        #   2 s late timer  ->  create_abort_task after the response returned
++        #   operator call   ->  POST /abort_request
++        #
++        # All four land in scheduler.abort_request, which pops the waiting queue, calls
++        # set_finish_with_abort on grammar requests, and sets to_finish = FINISH_ABORT
++        # on the running and last batch.
+         req = AbortReq(rid=rid, abort_all=abort_all)
+         self._dispatch_to_scheduler(req)
+         if self.enable_metrics:
+@@ -3419,17 +3426,25 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
+             time_stats.set_created_time(created_time)
+ 
+     def _discard_pending_req_states(self, obj):
+-        """Drop rid_to_state entries created by _init_req_state for *obj*.
+-
+-        Safe to call after a partial/failed dispatch: only entries still present
+-        are removed, and the scheduler-response path looks up state with
+-        ``.get(...)`` so a later output for a discarded rid is ignored, not fatal.
+-        """
++        """Abort still-pending requests on the scheduler, then drop their rid_to_state entries.
++        The dispatch must happen before the pop. A cancelled handler that only pops leaves
++        the scheduler decoding with no listener, and every later abort path for that rid is gone
++        by then: the delayed create_abort_task dies with the cancelled response,
++        and the disconnect checks never see it. The pop follows the dispatch whenever the rid
++        is still tracked, so a broken scheduler socket cannot leak entries or mask the original CancelledError."""
+         if not hasattr(obj, "is_single") or obj.is_single:
+             rids = [obj.rid]
+         else:
+             rids = obj.rid
+         for rid in rids:
++            if rid in self.rid_to_state:
++                try:
++                    self._dispatch_to_scheduler(AbortReq(rid=rid))
++                except Exception:
++                    logger.exception(
++                        "Failed to abort request during disconnect cleanup: %s",
++                        rid,
++                    )
+             self.rid_to_state.pop(rid, None)
+ 
+     def _should_dispatch_to_encoder(
+-- 
+2.55.0
+

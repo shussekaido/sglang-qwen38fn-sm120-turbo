@@ -1,7 +1,7 @@
-From fef1fc57ec030b3d9b0b7c80334c22bd992668a4 Mon Sep 17 00:00:00 2001
+From 3fd0e6b3f545f34e1fd278b561bfbe9fb6edb2ea Mon Sep 17 00:00:00 2001
 From: test <test@test>
-Date: Wed, 2 Sep 2026 21:41:59 +0000
-Subject: [PATCH 1/4] SM120 fp8 KV cache end-to-end (QSA, indexer)
+Date: Thu, 3 Sep 2026 09:24:54 +0000
+Subject: SM120 fp8 KV cache end-to-end (QSA, indexer)
 
 Covers QSA cache casting, the indexer, and page sizing, so the fp8
 cache is consistent from allocation through read.

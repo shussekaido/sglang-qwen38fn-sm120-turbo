@@ -1,7 +1,7 @@
-From 7500ce64f18c590db8190005472c794d15871344 Mon Sep 17 00:00:00 2001
+From 08040ce517676f1626885ccc07bced8d5b1f7196 Mon Sep 17 00:00:00 2001
 From: test <test@test>
-Date: Wed, 2 Sep 2026 21:41:59 +0000
-Subject: [PATCH 2/4] SM120 GDN MTP cache with side-stream recovery
+Date: Thu, 3 Sep 2026 09:24:54 +0000
+Subject: SM120 GDN MTP cache with side-stream recovery
 
 Includes the WY decode kernels and the KV budget.
 ---
@@ -259,7 +259,7 @@ index f677e1518e..acda61859b 100644
  
      stride_x_seq, stride_x_dim, stride_x_token = x.stride()  # X (batch, dim, seqlen)
 diff --git a/python/sglang/srt/layers/attention/hybrid_linear_attn_backend.py b/python/sglang/srt/layers/attention/hybrid_linear_attn_backend.py
-index beea4dcf38..ec7cce4abe 100644
+index beea4dcf38..1a443bac6f 100644
 --- a/python/sglang/srt/layers/attention/hybrid_linear_attn_backend.py
 +++ b/python/sglang/srt/layers/attention/hybrid_linear_attn_backend.py
 @@ -1,5 +1,6 @@
@@ -802,7 +802,7 @@ index beea4dcf38..ec7cce4abe 100644
 +        stash_per_layer = getattr(self.linear_attn_backend, "_no_cache_stash", {})
 +        if not stash_per_layer:
 +            logger.warning(
-+                "[mratsim's sm120-turbo r20] gdn recovery: stash not allocated at capture time; "
++                "[mratsim's sm120-turbo r21] gdn recovery: stash not allocated at capture time; "
 +                "recovery will run eagerly on the side stream (no cuda graph)."
 +            )
 +            return
@@ -902,7 +902,7 @@ index beea4dcf38..ec7cce4abe 100644
 +                    self._rec_boundary_graphs[B] = gb
 +            self._rec_capture_bs = buckets
 +            logger.info(
-+                "[mratsim's sm120-turbo r20] gdn recovery: captured %d recovery cuda graphs (buckets=%s, "
++                "[mratsim's sm120-turbo r21] gdn recovery: captured %d recovery cuda graphs (buckets=%s, "
 +                "boundary=%s)",
 +                len(buckets),
 +                buckets,
@@ -913,7 +913,7 @@ index beea4dcf38..ec7cce4abe 100644
 +            # (unsupported op in capture, cross-stream misuse). A different exception type
 +            # is a bug in this capture body and must crash: falling through to eager would hide it.
 +            logger.warning(
-+                "[mratsim's sm120-turbo r20] gdn recovery: recovery cuda graph capture failed (%s); "
++                "[mratsim's sm120-turbo r21] gdn recovery: recovery cuda graph capture failed (%s); "
 +                "falling back to eager side-stream recovery.",
 +                e,
 +            )
@@ -1210,7 +1210,7 @@ index beea4dcf38..ec7cce4abe 100644
 -        # Register short_conv_backend as the linear sidecar so it rides in
 -        # attn_backend_list and inherits the metadata / cuda-graph fan-out.
 +        # Register short_conv_backend as the linear sidecar so it rides in attn_backend_list
-+        # and inherits the metadata / cuda-graph fan-out.
++        # and gets the metadata build and cuda-graph capture every list entry gets.
          super().__init__(full_attn_backend, short_conv_backend, full_attn_layers)
          self.short_conv_backend = short_conv_backend
  
@@ -2069,7 +2069,7 @@ index ff6169366d..592d5291a7 100644
  
          run_post_process_pass(self, _mla_kv_cache_dtype_checks)
 diff --git a/python/sglang/srt/speculative/spec_utils.py b/python/sglang/srt/speculative/spec_utils.py
-index b64829bbd0..5b038bf79d 100644
+index b64829bbd0..de036a9cdd 100644
 --- a/python/sglang/srt/speculative/spec_utils.py
 +++ b/python/sglang/srt/speculative/spec_utils.py
 @@ -38,7 +38,10 @@ from sglang.srt.distributed.parallel_state import (
@@ -2197,7 +2197,7 @@ index b64829bbd0..5b038bf79d 100644
 +    A request can cross a boundary iff the two ends of that span sit in different
 +    intervals, which is exactly ``mamba_lazy_spec_in_window``. Returning True means no crossing
 +    is possible for any request: no checkpoint is due, and dropping the plan skips
-+    the re-fold sweep without losing a write. The bound must stay conservative
++    the boundary re-check without losing a write. The bound must stay conservative
 +    -- ``BatchResultProcessor._mamba_check_track_boundary`` computes the ping-pong advance
 +    independently, and any checkpoint it treats as due must never have been dropped here.
 +    """
@@ -2238,7 +2238,7 @@ index b64829bbd0..5b038bf79d 100644
          return
 +    if _recover_ssm_track_unreachable(batch):
 +        # Cleared explicitly: a plan built for an earlier step would otherwise survive here
-+        # and re-arm the boundary sweep against stale slots.
++        # and re-run the boundary check against stale slots.
 +        batch.mamba_track_indices = None
 +        batch.mamba_track_mask = None
 +        batch.mamba_track_seqlens = None
