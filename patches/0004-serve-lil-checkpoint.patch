@@ -57,7 +57,7 @@ index 56cb4c4a8d..325c432df5 100644
 +                self.hf_config = Qwen4ExpConfig(**raw)
 +                self.hf_text_config = get_hf_text_config(self.hf_config)
 +                logger.info(
-+                    "[mratsim's sm120-turbo r21] rebuilt LIL config: top=%s "
++                    "[mratsim's sm120-turbo r22] rebuilt LIL config: top=%s "
 +                    "text=%s(%s layers) vision=%s",
 +                    type(self.hf_config).__name__,
 +                    type(self.hf_text_config).__name__,
@@ -103,7 +103,7 @@ index b510394a6f..2471379b43 100755
 +                    seen.add(proj)
 +                    first_key = next(iter(self.quantized_layers), "")
 +                    logger.info(
-+                        "[mratsim's sm120-turbo r21] modelopt_mixed unquantized: "
++                        "[mratsim's sm120-turbo r22] modelopt_mixed unquantized: "
 +                        "prefix=%s map_keys=%d first_key=%s",
 +                        prefix,
 +                        len(self.quantized_layers or {}),
@@ -148,7 +148,7 @@ index 2d25f2add7..f2a90377ee 100644
 +                aliased[alias] = info
 +                added += 1
 +    logger.info(
-+        "[mratsim's sm120-turbo r21] modelopt_mixed quant map: %d module-form "
++        "[mratsim's sm120-turbo r22] modelopt_mixed quant map: %d module-form "
 +        "aliases added (%d keys in force)",
 +        added,
 +        len(aliased),
@@ -188,7 +188,7 @@ index 2d25f2add7..f2a90377ee 100644
 +                    key = f"{entry.get('quant_algo')}/g{entry.get('group_size')}"
 +                    algos[key] = algos.get(key, 0) + 1
 +                logger.info(
-+                    "[mratsim's sm120-turbo r21] modelopt_mixed quant map: %d "
++                    "[mratsim's sm120-turbo r22] modelopt_mixed quant map: %d "
 +                    "layers %s",
 +                    len(hf_quant_config.get("quantized_layers", {})),
 +                    dict(sorted(algos.items())),
@@ -213,7 +213,7 @@ index 2d25f2add7..f2a90377ee 100644
 +            if built_map is not None:
 +                # The config object the layers will resolve against. Its map size proves the module-form aliases survived construction.
 +                logger.info(
-+                    "[mratsim's sm120-turbo r21] modelopt_mixed config in "
++                    "[mratsim's sm120-turbo r22] modelopt_mixed config in "
 +                    "force: %d map keys",
 +                    len(built_map),
 +                )
@@ -640,7 +640,7 @@ index 8e76d57c46..938319875f 100644
 +                            continue
 +                        if not _scale_claimed_by_map(name):
 +                            logger.info(
-+                                "[mratsim's sm120-turbo r21] dropped "
++                                "[mratsim's sm120-turbo r22] dropped "
 +                                "checkpoint scale of unquantized module: %s",
 +                                name,
 +                            )
@@ -657,7 +657,7 @@ index 8e76d57c46..938319875f 100644
 +                                break
 +                        target = modules_by_name.get(module_prefix)
 +                        logger.info(
-+                            "[mratsim's sm120-turbo r21] claimed scale has no "
++                            "[mratsim's sm120-turbo r22] claimed scale has no "
 +                            "landing site: %s module=%s method=%s params=%s",
 +                            name,
 +                            type(target).__name__ if target else None,
@@ -684,14 +684,14 @@ index 8e76d57c46..938319875f 100644
 +                for (base, comp), pair in sorted(gdn_ba_pending.items())
 +            )
 +            raise RuntimeError(
-+                "[mratsim's sm120-turbo r21] mxfp8 in_proj_ba components never "
++                "[mratsim's sm120-turbo r22] mxfp8 in_proj_ba components never "
 +                f"paired ({stuck})"
 +            )
  
 +        if unmatched_scales:
 +            detail = ", ".join(f"{n} {s} {d}" for n, s, d in unmatched_scales)
 +            raise RuntimeError(
-+                "[mratsim's sm120-turbo r21] unmatched checkpoint scales with no "
++                "[mratsim's sm120-turbo r22] unmatched checkpoint scales with no "
 +                f"parameter (module not created quantized): {detail}"
 +            )
  
@@ -702,7 +702,7 @@ index 8e76d57c46..938319875f 100644
          self._log_weight_dtype_census()
 +        if ple_packed_stats["rows"]:
 +            logger.info(
-+                "[mratsim's sm120-turbo r21] PLE table dequantized from nvfp4: %d rows, "
++                "[mratsim's sm120-turbo r22] PLE table dequantized from nvfp4: %d rows, "
 +                "%.2f GiB packed bytes read",
 +                ple_packed_stats["rows"],
 +                ple_packed_stats["bytes"] / 2**30,

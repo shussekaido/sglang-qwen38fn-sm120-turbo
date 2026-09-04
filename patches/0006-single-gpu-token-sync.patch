@@ -1,0 +1,38 @@
+From 5405ed605018b8fcba072e59caf113a65d1a8e77 Mon Sep 17 00:00:00 2001
+From: test <test@test>
+Date: Thu, 3 Sep 2026 12:18:43 +0000
+Subject: Skip the sampler all-reduce on a single GPU
+
+---
+ python/sglang/srt/layers/sampler.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/python/sglang/srt/layers/sampler.py b/python/sglang/srt/layers/sampler.py
+index b491ed0..64226f5 100644
+--- a/python/sglang/srt/layers/sampler.py
++++ b/python/sglang/srt/layers/sampler.py
+@@ -74,6 +74,7 @@ class Sampler(nn.Module):
+         self.tp_sync_group = get_tp_group().device_group
+         if is_dp_attention_enabled():
+             self.tp_sync_group = get_parallel().attn_tp_group.device_group
++        self.tp_sync_world_size = dist.get_world_size(group=self.tp_sync_group)
+ 
+         self.rl_on_policy_target = get_exec().deterministic.rl_on_policy_target
+         # In RL on-policy mode, deterministic inference is automatically enabled.
+@@ -497,6 +498,13 @@ class Sampler(nn.Module):
+     def _sync_token_ids_across_tp(
+         self, batch_next_token_ids: torch.Tensor, sampling_info: SamplingBatchInfo
+     ):
++        # A reduction over the ranks of this group leaves the tensor unchanged when the group
++        # holds one rank. The call is still skipped here. The first collective on a process
++        # group is where NCCL creates its communicator and allocates its buffers
++        # on the device, outside the caching allocator. On a one-GPU server that allocation
++        # would arrive during the first sampled token, with the KV pool already holding the free memory.
++        if self.tp_sync_world_size == 1:
++            return
+         if SYNC_TOKEN_IDS_ACROSS_TP or sampling_info.grammars:
+             # For performance reasons, SGLang does not sync the final token IDs across TP ranks by default.
+             # This saves one all-reduce, but the correctness of this approach depends on the determinism of several operators:
+-- 
+2.55.0
+

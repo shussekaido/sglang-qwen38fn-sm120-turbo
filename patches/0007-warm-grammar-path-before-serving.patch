@@ -1,0 +1,80 @@
+From 91791bd25b973b902d248efb8c9b1e7e95ac7528 Mon Sep 17 00:00:00 2001
+From: test <test@test>
+Date: Thu, 3 Sep 2026 14:04:24 +0000
+Subject: Warm the grammar path before serving traffic
+
+---
+ python/sglang/srt/entrypoints/warmup.py | 53 +++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+
+diff --git a/python/sglang/srt/entrypoints/warmup.py b/python/sglang/srt/entrypoints/warmup.py
+index 2608621..42a49c9 100644
+--- a/python/sglang/srt/entrypoints/warmup.py
++++ b/python/sglang/srt/entrypoints/warmup.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import json
+ import logging
+ from typing import TYPE_CHECKING, List
+ 
+@@ -159,3 +160,55 @@ async def prefill_shapes(disaggregation_mode: str, tokenizer_manager: TokenizerM
+             generate_req_input.bootstrap_host = FAKE_BOOTSTRAP_HOST
+ 
+         await tokenizer_manager.generate_request(generate_req_input, None).__anext__()
++
++
++# A module constant, because xgrammar keys its compiled FSM cache on the exact grammar text.
++# A schema assembled at call time would compile a new FSM on every boot instead of reusing
++# the one this warmup installs.
++_GRAMMAR_WARMUP_SCHEMA = json.dumps(
++    {
++        "type": "object",
++        "properties": {
++            "topic": {"type": "string"},
++            "items": {"type": "array", "items": {"type": "string"}},
++        },
++        "required": ["topic", "items"],
++    },
++    sort_keys=True,
++)
++
++
++@warmup("sm120_turbo_structured_output")
++async def sm120_turbo_structured_output(
++    disaggregation_mode: str, tokenizer_manager: TokenizerManager
++):
++    """Sample one grammar-bound request before a client has to wait for it.
++
++    A structured request pays two costs on its first use in a boot. xgrammar compiles the FSM
++    for the schema, and the mask kernel ``apply_token_bitmask_inplace_kernel`` reaches
++    the device at its first launch, which is after the KV pool and the CUDA graphs took
++    the memory. Running the request here moves both costs into the boot window, where a slow
++    compile or a failed allocation reads as a startup failure.
++
++    Two scalar members and an array keep the FSM compile short and still give the mask kernel
++    a wide mask to apply.
++    """
++    req = GenerateReqInput(
++        text="Name a topic and list three items in it.",
++        sampling_params={
++            "max_new_tokens": 32,
++            "temperature": 0.0,
++            "json_schema": _GRAMMAR_WARMUP_SCHEMA,
++        },
++    )
++    if disaggregation_mode != "null":
++        req.bootstrap_room = 0
++        req.bootstrap_host = FAKE_BOOTSTRAP_HOST
++    # Drain the generator rather than taking the first item, so the grammar is installed
++    # and the kernel launch has happened by the time this returns.
++    async for _ in tokenizer_manager.generate_request(req, None):
++        pass
++    logger.info(
++        "[mratsim's sm120-turbo r22] grammar warmup: FSM compiled and the token bitmask"
++        " kernel reached the device."
++    )
+\ No newline at end of file
+-- 
+2.55.0
+

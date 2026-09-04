@@ -12,8 +12,8 @@ Despite being undertrained, and having very few active parameters and a small si
 
 On the NVFP4 checkpoint [`RadixArk/Qwen3.8-Flash-Next-NVFP4`](https://huggingface.co/RadixArk/Qwen3.8-Flash-Next-NVFP4), served by the day-0 SGLang image:
 - 1x RTX Pro 6000, power-limited to 360W, memory overclocked by +3000MT/s (+6000 in LACT)
-- 939456 tokens in KV cache for 4 max concurrent requests
-- 856256 tokens in KV cache for 8 max concurrent requests
+- 939456 tokens in KV cache for 4 max concurrent requests @ 0.98 GPU memory utilization
+- 856256 tokens in KV cache for 8 max concurrent requests @ 0.98 GPU memory utilization
 - 11k~13k prefill tok/s
 
   <details><summary>prefill trace</summary>
@@ -53,8 +53,10 @@ This builds on top of the day-0 official Docker image `lmsysorg/sglang:qwen38fla
 - **0001** makes fp8 KV cache work on sm_120.
 - **0002** linear-attention layers don't cache MTP drafts, they are recomputed. Saves ~2 GB of KV budget. (And it's surprisingly not slower)
 - **0003** quantizes at load whatever the checkpoint left in bf16 (attention, MLP, lm_head, hyperconnection mix) to MXFP8 to reduce memory bandwidth at close to zero-accuracy cost. On FlashInfer 0.6.18, this should be even faster as FlashInfer 0.6.18 integrates [`local-inference-lab/b12x`](https://github.com/local-inference-lab/b12x) and its hardware-accelerated block-scaled GEMM kernel.
-- **0004** prepares support for https://huggingface.co/local-inference-lab/Qwen3.8-Flash-Next-NVFP4 which has a calibration dataset richer than CNN/DailyMail. This is important to get proper scales for NVFP4 activations so signal isn't lost due to oversaturation because the calibration scale doesn't represent actual maximum.
+- **0004** prepares support for https://huggingface.co/local-inference-lab/Qwen3.8-Flash-Next-NVFP4 which has a calibration dataset richer than CNN/DailyMail. This is important to get proper scales for NVFP4 activations so signal isn't lost due to oversaturation because the calibration scale doesn't represent actual maximum in diverse user workflows.
 - **0005** keeps abandoned runs from eating the machine: an aborted or timed-out client now really evicts its request, and no longer starves the queue behind it.
+- **0006** stops the sampler from using NNCL when the server has a single GPU. This was a bug or an oversight in structured JSON decoding, that led to extra GPU memory utilization.
+- **0007** Preload triton kernels at boot via long prefill warmup and structure decoding warmup to ensure reserved GPU memory is sufficient and server doesn't crash in the middle of queries.
 
 ## Build and serve
 
@@ -66,7 +68,7 @@ Modify the top of `serve_sglang_qwen3.8-flash-next-example.sh` for your machine:
 - `PODNAME`, `SGLANG_PORT`: container name and port
 
 ```bash
-podman build -t localhost/sglang-qwen38fn-sm120-turbo:r21 .
+podman build -t localhost/sglang-qwen38fn-sm120-turbo:r22 .
 ./serve_sglang_qwen3.8-flash-next-example.sh    # recap of the full config goes to stderr
 curl -s localhost:30000/health
 ```

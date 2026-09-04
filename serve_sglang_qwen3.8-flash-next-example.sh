@@ -60,7 +60,10 @@ esac
 # ============================================================
 TP_SIZE=1
 
-GPU_UTIL=0.98                     # --mem-fraction-static, ~72K KV tokens per 0.01. 0.98 = 939,456 tokens.
+GPU_UTIL=0.975              # --mem-fraction-static, ~76K KV tokens per 0.01.
+                            # 0.975 leaves about ~475MB spare out of 96GiB
+                            # Images preprocess on the device and need ~100 MB each.
+                            # JIT-ed Triton kernels also use spare VRAM
 CONTEXT_SIZE=262144
 KVFP8=true
 
