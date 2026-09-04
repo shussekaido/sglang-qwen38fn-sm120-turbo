@@ -8,7 +8,7 @@ set -euo pipefail
 # ============================================================
 # Container setup
 # ============================================================
-IMAGE="localhost/sglang-qwen38fn-sm120-turbo:r21"
+IMAGE="localhost/sglang-qwen38fn-sm120-turbo:r22"
 PODNAME="sglang"
 SGLANG_PORT=30000
 

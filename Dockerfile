@@ -11,7 +11,7 @@
 #   0006  skip the sampler's token-id reduction when the tensor-parallel group holds a single GPU, so no NCCL communicator is created during serving
 #   0007  sample one grammar-bound request during startup warmup, so the xgrammar FSM compile and the token bitmask kernel load land in the boot window instead of inside the first structured request
 
-FROM lmsysorg/sglang:qwen38flashnext@sha256:59f06adce6f91401adf443bd168d45fdb2044d77671fd591c7c57a29d851cbae
+FROM docker.io/lmsysorg/sglang:qwen38flashnext@sha256:59f06adce6f91401adf443bd168d45fdb2044d77671fd591c7c57a29d851cbae
 
 WORKDIR /sgl-workspace/sglang
 
