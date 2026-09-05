@@ -1,0 +1,181 @@
+{
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+  "torch": "2.13.0+cu130",
+  "source_sha256": {
+    "baseline": "12c4d4d34774e5592c3a3ba3956d19a280606007e0161598e4e108bb6caa479b",
+    "candidate": "9f0fc164161c1e567cbef4583cf97ad285ddd130090a139126987253a1cec846"
+  },
+  "cases": [
+    {
+      "lengths": [
+        8192
+      ],
+      "cache_dtype": "torch.float8_e4m3fn",
+      "measurements": [
+        {
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "peak_increment_bytes": {
+            "baseline": 33560064,
+            "candidate": 16782848
+          }
+        },
+        {
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "peak_increment_bytes": {
+            "candidate": 16782848,
+            "baseline": 33560064
+          }
+        }
+      ]
+    },
+    {
+      "lengths": [
+        6144,
+        8192
+      ],
+      "cache_dtype": "torch.float8_e4m3fn",
+      "measurements": [
+        {
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "peak_increment_bytes": {
+            "baseline": 58729984,
+            "candidate": 29369856
+          }
+        },
+        {
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "peak_increment_bytes": {
+            "candidate": 29369856,
+            "baseline": 58729984
+          }
+        }
+      ]
+    },
+    {
+      "lengths": [
+        131072
+      ],
+      "cache_dtype": "torch.float8_e4m3fn",
+      "measurements": [
+        {
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "peak_increment_bytes": {
+            "baseline": 536876544,
+            "candidate": 268441088
+          }
+        },
+        {
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "peak_increment_bytes": {
+            "candidate": 268441088,
+            "baseline": 536876544
+          }
+        }
+      ]
+    },
+    {
+      "lengths": [
+        8192
+      ],
+      "cache_dtype": "torch.bfloat16",
+      "measurements": [
+        {
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "peak_increment_bytes": {
+            "baseline": 33560064,
+            "candidate": 33560064
+          }
+        },
+        {
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "peak_increment_bytes": {
+            "candidate": 33560064,
+            "baseline": 33560064
+          }
+        }
+      ]
+    },
+    {
+      "lengths": [
+        6144,
+        8192
+      ],
+      "cache_dtype": "torch.bfloat16",
+      "measurements": [
+        {
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "peak_increment_bytes": {
+            "baseline": 58729984,
+            "candidate": 58729984
+          }
+        },
+        {
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "peak_increment_bytes": {
+            "candidate": 58729984,
+            "baseline": 58729984
+          }
+        }
+      ]
+    },
+    {
+      "lengths": [
+        131072
+      ],
+      "cache_dtype": "torch.bfloat16",
+      "measurements": [
+        {
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "peak_increment_bytes": {
+            "baseline": 536876544,
+            "candidate": 536876544
+          }
+        },
+        {
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "peak_increment_bytes": {
+            "candidate": 536876544,
+            "baseline": 536876544
+          }
+        }
+      ]
+    }
+  ],
+  "scope": "Prefill gather/kernel only; no model, cache writes, MTP or server qualification"
+}
