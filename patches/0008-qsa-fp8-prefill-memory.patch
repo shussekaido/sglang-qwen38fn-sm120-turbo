@@ -1,0 +1,38 @@
+--- a/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py
++++ b/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py
+@@ -1473,27 +1473,19 @@
+         v_buffer = pool.get_value_buffer(layer.layer_id)
+         req_to_token = self.req_to_token_pool.req_to_token
+         req_indices = forward_batch.req_pool_indices.tolist()
+-        # With --kv-cache-dtype fp8_e4m3 this path receives an fp8 KV buffer.
+-        # tl.dot inside sparse_gqa_fwd_interface_triton_ck rejects fp8 rhs operands
+-        # ("Unsupported rhs dtype fp8e4nv"), so the selected rows are cast to the query dtype.
+-        # TODO: assumes the direct-cast e4m3 store, KV scale 1.0.
+-        # If a checkpoint ships per-layer KV descale, apply those scales here.
+-        _kv_cast = (
+-            (lambda t: t.to(q.dtype)) if k_buffer.dtype != q.dtype else (lambda t: t)
+-        )
++        # Keep packed history in the cache dtype. The sparse prefill kernel
++        # converts selected tiles to q.dtype before arithmetic; casting full
++        # histories here would double FP8 scratch storage before concatenation.
++        # Like the existing path, this assumes direct-cast KV with scale 1.0.
+         k_parts = [
+-            _kv_cast(
+-                k_buffer.index_select(
+-                    0, req_to_token[req_indices[i], : sequence_lens[i]].long()
+-                )
++            k_buffer.index_select(
++                0, req_to_token[req_indices[i], : sequence_lens[i]].long()
+             )
+             for i in range(len(sequence_lens))
+         ]
+         v_parts = [
+-            _kv_cast(
+-                v_buffer.index_select(
+-                    0, req_to_token[req_indices[i], : sequence_lens[i]].long()
+-                )
++            v_buffer.index_select(
++                0, req_to_token[req_indices[i], : sequence_lens[i]].long()
+             )
+             for i in range(len(sequence_lens))
+         ]
